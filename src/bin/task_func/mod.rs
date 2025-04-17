@@ -2,7 +2,7 @@ use defmt::info;
 use embassy_stm32::gpio::Output;
 use embassy_stm32::mode::Blocking;
 use embassy_stm32::{spi, Config};
-use embassy_time::{Delay, Timer};
+use embassy_time::{Delay, Duration, Timer};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::prelude::RgbColor;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle};
@@ -90,7 +90,8 @@ pub async fn dislay_task(
         // Text::new("->", Point::new(1, 35), sel_style)
         //     .draw(&mut display)
         //     .unwrap();
-        Timer::after_ticks(10000).await;
+        Timer::after(Duration::from_nanos(1)).await;
+        // Timer::after_ticks(10000).await;
         // info!("SPISPI");
     }
     // for n in 0u32.. {
@@ -105,3 +106,12 @@ pub async fn dislay_task(
         
     // }
 }
+
+#[embassy_executor::task]
+pub async fn run_med() {
+    loop {
+        info!("MID");
+        Timer::after(Duration::from_millis(10)).await;
+    }
+}
+

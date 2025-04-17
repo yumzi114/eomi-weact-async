@@ -10,11 +10,11 @@ use embassy_executor::{Executor, Spawner};
 use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
 use embassy_stm32::sdmmc::Sdmmc;
-use embassy_stm32::time::mhz;
+use embassy_stm32::time::{mhz, Hertz};
 use embassy_stm32::{bind_interrupts, peripherals, sdmmc, spi, Config};
 use embassy_time::{Delay, Duration, Instant, Timer};
 use static_cell::StaticCell;
-use task_func::{dislay_task, run_med};
+use task_func::dislay_task;
 use {defmt_rtt as _, panic_probe as _};
 
 
@@ -33,23 +33,26 @@ async fn main(spawner: Spawner) {
     let mut config = Config::default();
     {
         use embassy_stm32::rcc::*;
-
+        config.rcc.hse = Some(Hse {
+            freq: Hertz(25_000_000),  // 25 MHz 외부 클럭
+            mode: HseMode::Bypass,   // 크리스탈 모드로 설정
+        });
         config.rcc.hsi = Some(HSIPrescaler::DIV1); // HSI = 64 MHz
         config.rcc.csi = true;
         config.rcc.pll1 = Some(Pll {
-            source: PllSource::HSI,           // PLL 입력 = HSI (64 MHz)
+            source: PllSource::HSE,           // PLL 입력 = HSI (64 MHz)
             prediv: PllPreDiv::DIV4,          // VCO 입력 = 64 / 4 = 16 MHz
-            mul: PllMul::MUL50,               // VCO 출력 = 16 * 50 = 800 MHz
+            mul: PllMul::MUL4,               // VCO 출력 = 16 * 50 = 800 MHz
             divp: Some(PllDiv::DIV2),         // PLL1_P = 800 / 2 = 400 MHz (SYSCLK)
             divq: Some(PllDiv::DIV4),         // default clock chosen by SDMMCSEL. 200 Mhz
             divr: None,
         });
         config.rcc.sys = Sysclk::PLL1_P;      // SYSCLK = 400 MHz
-        config.rcc.ahb_pre = AHBPrescaler::DIV2;   // AHB = 400 / 2 = 200 MHz
-        config.rcc.apb1_pre = APBPrescaler::DIV2;  // APB1 = 200 / 2 = 100 MHz
-        config.rcc.apb2_pre = APBPrescaler::DIV2;  // APB2 = 200 / 2 = 100 MHz
-        config.rcc.apb3_pre = APBPrescaler::DIV2;  // APB3 = 200 / 2 = 100 MHz
-        config.rcc.apb4_pre = APBPrescaler::DIV2;  // APB4 = 200 / 2 = 100 MHz
+        config.rcc.ahb_pre = AHBPrescaler::DIV1;   // AHB = 400 / 2 = 200 MHz
+        config.rcc.apb1_pre = APBPrescaler::DIV1;  // APB1 = 200 / 2 = 100 MHz
+        config.rcc.apb2_pre = APBPrescaler::DIV1;  // APB2 = 200 / 2 = 100 MHz
+        config.rcc.apb3_pre = APBPrescaler::DIV1;  // APB3 = 200 / 2 = 100 MHz
+        config.rcc.apb4_pre = APBPrescaler::DIV1;  // APB4 = 200 / 2 = 100 MHz
 
         config.rcc.voltage_scale = VoltageScale::Scale1; // 최대 클럭 지원 (400 MHz 이상)
     }
@@ -64,7 +67,7 @@ async fn main(spawner: Spawner) {
     // blue_led.
     // let cs = gpioa.pa4.into_push_pull_output();
     let mut spi_config = spi::Config::default();
-    spi_config.frequency = mhz(20);
+    spi_config.frequency = mhz(10);
     //ILI9486 SPI DISPLAY SETTING
     let back_l = Output::new(p.PA3, Level::High, Speed::High);
     let ce = Output::new(p.PA4, Level::High, Speed::Low);
@@ -91,8 +94,8 @@ async fn main(spawner: Spawner) {
     info!("Configured clock: {}", sdmmc.clock().0);
     // let card = unwrap!(sdmmc.card());
     // info!("Card: {:#?}", Debug2Format(card));
-    // unwrap!(sdmmc.init_card(mhz(350)).await);
-    // let card = unwrap!(sdmmc.card());
+    unwrap!(sdmmc.init_card(mhz(20)).await);
+    let card = unwrap!(sdmmc.card());
 
     // info!("Card: {:#?}", Debug2Format(card));
     // let executor = EXECUTOR.init(Executor::new());
@@ -131,7 +134,6 @@ async fn main(spawner: Spawner) {
             }
             blue_led.set_low();
         }
-        Timer::after(Duration::from_millis(10)).await;
     }
     // loop{
     //     info!("read via asdasdasdasd");
@@ -142,3 +144,10 @@ async fn main(spawner: Spawner) {
 }
 
 
+#[embassy_executor::task]
+async fn run_med() {
+    loop {
+        info!("MID");
+        Timer::after_ticks(10000).await;
+    }
+}
