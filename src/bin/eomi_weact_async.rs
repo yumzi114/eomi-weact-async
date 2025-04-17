@@ -2,9 +2,7 @@
 #![no_main]
 
 mod task_func;
-use core::cell::RefCell;
 use core::fmt::Write;
-use core::mem::MaybeUninit;
 use core::str::from_utf8;
 use cortex_m_rt::entry;
 use defmt::*;
@@ -13,20 +11,18 @@ use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
 use embassy_stm32::time::mhz;
 use embassy_stm32::{spi, Config};
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_time::{Delay, Instant, Timer};
+use embassy_time::{Delay, Duration, Instant, Timer};
 
 use static_cell::StaticCell;
 use task_func::dislay_task;
 use {defmt_rtt as _, panic_probe as _};
-use embassy_sync::blocking_mutex::Mutex;
+
 
 use core::sync::atomic::{AtomicBool, AtomicUsize,Ordering};
 
 static MENU_STATE: AtomicUsize = AtomicUsize::new(1_usize);
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
-static BLUE_LED: Mutex<CriticalSectionRawMutex, RefCell<Option<Output<'static>>>> =
-    Mutex::new(RefCell::new(None));
+
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -58,16 +54,11 @@ async fn main(spawner: Spawner) {
     let p: embassy_stm32::Peripherals = embassy_stm32::init(config);
     // let ce = Input::new(p.PA4, Pull::Up);
     
-    let mut up_button: ExtiInput = ExtiInput::new(p.PA11, p.EXTI11, Pull::Down);
-    let mut down_button = ExtiInput::new(p.PA10, p.EXTI10, Pull::Down);
-    let mut blue_led: Output<'static>=Output::new(p.PE3, Level::Low, Speed::Low);
-    BLUE_LED.lock(|led| {
-        *led.borrow_mut() = Some(blue_led);
-    });
-    // BLUE_LED.lock(|led: &mut MaybeUninit<Output>| {
-    //     *led = MaybeUninit::new(blue_led);
-    // });
-    
+    // let mut up_button = ExtiInput::new(p.PA11, p.EXTI11, Pull::Down);
+    // let mut down_button = ExtiInput::new(p.PA10, p.EXTI10, Pull::Down);
+    let mut up_button = Input::new(p.PA11,Pull::Down);
+    let mut down_button = Input::new(p.PA10,Pull::Down);
+    let mut blue_led=Output::new(p.PE3, Level::Low, Speed::Low);
     // blue_led.
     // let cs = gpioa.pa4.into_push_pull_output();
     let mut spi_config = spi::Config::default();
@@ -86,40 +77,40 @@ async fn main(spawner: Spawner) {
     
     // let executor = EXECUTOR.init(Executor::new());
     spawner.spawn(dislay_task(spi,ce,dc,rst)).ok();
-    spawner.spawn(up_bt_interrupt(up_button)).ok();
-    spawner.spawn(down_bt_interrupt(down_button)).ok();
+    spawner.spawn(run_med()).ok();
     loop{
         //button interrupts
         //down
-        // down_button.wait_for_rising_edge().await;
-        // blue_led.set_high();
-        // if MENU_STATE.load(Ordering::Acquire)<3{
-        //     let num = MENU_STATE.load(Ordering::Acquire);
-        //     MENU_STATE.store(num+1, Ordering::Release);
-            
-        // }else{
-        //     MENU_STATE.store(1, Ordering::Release);
-        // }
-        
-        // down_button.wait_for_falling_edge().await;
-        // blue_led.set_low();
-        //up
+        if up_button.is_high() {
+            blue_led.set_high();
+            if MENU_STATE.load(Ordering::Acquire)<3{
+                let num = MENU_STATE.load(Ordering::Acquire);
+                MENU_STATE.store(num+1, Ordering::Release);
+                
+            }else{
+                MENU_STATE.store(1, Ordering::Release);
+            }
+            while up_button.is_high() {
+                Timer::after(Duration::from_millis(10)).await;
+            }
+            blue_led.set_low();
+        }
 
-        // up_button.wait_for_rising_edge().await;
-        // blue_led.set_high();
-        // if MENU_STATE.load(Ordering::Acquire)>1{
-        //     let num = MENU_STATE.load(Ordering::Acquire);
-        //     MENU_STATE.store(num-1, Ordering::Release);
-        // }
-        // else{
-        //     MENU_STATE.store(3, Ordering::Release);
-        // }
-        // up_button.wait_for_falling_edge().await;
-        // blue_led.set_low();
-
-
-        // info!("MAIN");
-        Timer::after_ticks(1).await;
+        if down_button.is_high() {
+            blue_led.set_high();
+            if MENU_STATE.load(Ordering::Acquire)>1{
+                let num = MENU_STATE.load(Ordering::Acquire);
+                MENU_STATE.store(num-1, Ordering::Release);
+            }
+            else{
+                MENU_STATE.store(3, Ordering::Release);
+            }
+            // defmt::info!("DOWN pressed");
+            while down_button.is_high() {
+                Timer::after(Duration::from_millis(10)).await;
+            }
+            blue_led.set_low();
+        }
     }
     // loop{
     //     info!("read via asdasdasdasd");
@@ -131,60 +122,9 @@ async fn main(spawner: Spawner) {
 
 
 #[embassy_executor::task]
-async fn up_bt_interrupt(
-    mut up_button: ExtiInput<'static>
-) {
+async fn run_med() {
     loop {
-        up_button.wait_for_rising_edge().await;
-        // blue_led.set_high();
-        BLUE_LED.lock(|led| {
-            if let Some(ref mut out) = *led.borrow_mut() {
-                out.set_high();
-            }
-        });
-        if MENU_STATE.load(Ordering::Acquire)>1{
-            let num = MENU_STATE.load(Ordering::Acquire);
-            MENU_STATE.store(num-1, Ordering::Release);
-        }
-        else{
-            MENU_STATE.store(3, Ordering::Release);
-        }
-        up_button.wait_for_falling_edge().await;
-        BLUE_LED.lock(|led| {
-            if let Some(ref mut out) = *led.borrow_mut() {
-                out.set_low();
-            }
-        });
-        // blue_led.set_low();
-        // Timer::after_ticks(1).await;
-    }
-}
-#[embassy_executor::task]
-async fn down_bt_interrupt(
-    mut down_button: ExtiInput<'static>
-) {
-    loop {
-        down_button.wait_for_rising_edge().await;
-        // blue_led.set_high();
-        BLUE_LED.lock(|led| {
-            if let Some(ref mut out) = *led.borrow_mut() {
-                out.set_high();
-            }
-        });
-        if MENU_STATE.load(Ordering::Acquire)<3{
-            let num = MENU_STATE.load(Ordering::Acquire);
-            MENU_STATE.store(num+1, Ordering::Release);
-            
-        }else{
-            MENU_STATE.store(1, Ordering::Release);
-        }
-        
-        down_button.wait_for_falling_edge().await;
-        BLUE_LED.lock(|led| {
-            if let Some(ref mut out) = *led.borrow_mut() {
-                out.set_low();
-            }
-        });
-        // blue_led.set_low();
+        info!("MID");
+        Timer::after_ticks(10000).await;
     }
 }
