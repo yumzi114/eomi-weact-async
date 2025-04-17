@@ -5,6 +5,7 @@ use embassy_stm32::{spi, Config};
 use embassy_time::{Delay, Timer};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::prelude::RgbColor;
+use embedded_graphics::primitives::{Line, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle};
 use embedded_hal_async::spi::SpiDevice;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use mipidsi::interface::SpiInterface;
@@ -14,7 +15,9 @@ use mipidsi::Builder;
 use profont::PROFONT_24_POINT;
 use embedded_graphics::text::Text;
 use embedded_graphics::{prelude::*, pixelcolor::Rgb666};
-
+use embassy_executor::{Executor, Spawner};
+use core::sync::atomic::{AtomicBool, AtomicUsize,Ordering};
+use crate::MENU_STATE;
 
 
 #[embassy_executor::task]
@@ -29,7 +32,13 @@ pub async fn dislay_task(
     // let spi_device = ExclusiveDevice::new_no_delay(spi, cs_output).unwrap();
     let di = SpiInterface::new(spi_device, dc, &mut buffer);
     let mut delay = Delay;
+    let s_style = MonoTextStyle::new(&PROFONT_24_POINT, Rgb666::WHITE);
     let sel_style = MonoTextStyle::new(&PROFONT_24_POINT, Rgb666::BLUE);
+    let r_style = PrimitiveStyleBuilder::new()
+        .fill_color(Rgb666::BLACK) 
+        .build();
+    let menu_list = ["1 MENU", "2 MENU", "3 MENU"];
+    let mut flag= 0_usize;
     let mut display = Builder::new(ILI9486Rgb666, di)
     .reset_pin(rst)
     .init(&mut delay).unwrap();
@@ -39,9 +48,48 @@ pub async fn dislay_task(
     
     // display.set_orientation(Orientation::Portrait(true)).unwrap();
     loop{
-        Text::new("->", Point::new(30, 30), sel_style)
-            .draw(&mut display)
-            .unwrap();
+        if flag!=MENU_STATE.load(Ordering::Acquire){
+            Rectangle::new(Point::new(1, 10), Size::new(30, 130))
+                .into_styled(r_style)
+                .draw(&mut display)
+                .unwrap();
+            Rectangle::new(Point::new(20, 180), Size::new(200, 50))
+                .into_styled(r_style)
+                .draw(&mut display)
+                .unwrap();
+            Text::new("->", Point::new(1, (MENU_STATE.load(Ordering::Acquire) as i32 * 30)+15), sel_style)
+                .draw(&mut display)
+                .unwrap();
+            flag=MENU_STATE.load(Ordering::Acquire);
+        };
+        menu_list.iter().enumerate().for_each(|(len, str)| {
+            let posion = len + 1;
+            if flag==posion{
+                let description=match flag {
+                    1=>"SOMEEEEE",
+                    2=>"TWOOOOOOOO",
+                    3=>"THREEEE",
+                    _=>"UNKOWN"
+                };
+                Text::new(str, Point::new(40, (posion as i32 * 30)+15), sel_style)
+                    .draw(&mut display)
+                    .unwrap();
+                Line::new(Point::new(1, 150), Point::new(310, 150))
+                    .into_styled(PrimitiveStyle::with_stroke(Rgb666::WHITE, 1))
+                    .draw(&mut display).unwrap();
+                Text::new(description, Point::new(20, 200), s_style)
+                    .draw(&mut display)
+                    .unwrap();
+            }else {
+                Text::new(str, Point::new(40, (posion as i32 * 30)+15), s_style)
+                    .draw(&mut display)
+                    .unwrap();
+            }
+            
+        });
+        // Text::new("->", Point::new(1, 35), sel_style)
+        //     .draw(&mut display)
+        //     .unwrap();
         Timer::after_ticks(10000).await;
         // info!("SPISPI");
     }
