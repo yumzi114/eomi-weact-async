@@ -13,18 +13,39 @@ use embassy_stm32::sdmmc::Sdmmc;
 use embassy_stm32::time::mhz;
 use embassy_stm32::{bind_interrupts, peripherals, sdmmc, spi, Config};
 use embassy_time::{Delay, Duration, Instant, Timer};
+use embedded_nrf24l01::NRF24L01;
 use static_cell::StaticCell;
-use task_func::{dislay_task, run_med};
+use task_func::{dislay_task, rf_rec};
 use {defmt_rtt as _, panic_probe as _};
-
-
+use embedded_hal_1::digital::OutputPin;
+use embedded_hal_1::digital::ErrorType;
 use core::sync::atomic::{AtomicBool, AtomicUsize,Ordering};
 
 static MENU_STATE: AtomicUsize = AtomicUsize::new(1_usize);
+static RF_STATE: AtomicBool = AtomicBool::new(false);
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+
+
 bind_interrupts!(struct Irqs {
     SDMMC1 => sdmmc::InterruptHandler<peripherals::SDMMC1>;
 });
+// use embedded_hal::digital::v2::OutputPin;
+use core::convert::Infallible;
+// pub struct SafeOutputPin<P>(pub P);
+
+// impl<P: OutputPin<Error = Infallible>> ErrorType for SafeOutputPin<P> {
+//     type Error = Infallible;
+// }
+
+// impl<P: OutputPin<Error = Infallible>> OutputPin for SafeOutputPin<P> {
+//     fn set_high(&mut self) -> Result<(), Self::Error> {
+//         self.0.set_high()
+//     }
+
+//     fn set_low(&mut self) -> Result<(), Self::Error> {
+//         self.0.set_low()
+//     }
+// }
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -54,17 +75,15 @@ async fn main(spawner: Spawner) {
         config.rcc.voltage_scale = VoltageScale::Scale1; // 최대 클럭 지원 (400 MHz 이상)
     }
     let p: embassy_stm32::Peripherals = embassy_stm32::init(config);
-    // let ce = Input::new(p.PA4, Pull::Up);
-    
-    // let mut up_button = ExtiInput::new(p.PA11, p.EXTI11, Pull::Down);
-    // let mut down_button = ExtiInput::new(p.PA10, p.EXTI10, Pull::Down);
+    // let rf_ce: SafeOutputPin<peripherals::PA8> = SafeOutputPin(p.PA8);
+    // let rf_csn: SafeOutputPin<peripherals::PA9> = SafeOutputPin(p.PA9);
     let up_button = Input::new(p.PA11,Pull::Down);
     let down_button = Input::new(p.PA10,Pull::Down);
     let mut blue_led=Output::new(p.PE3, Level::Low, Speed::Low);
     // blue_led.
     // let cs = gpioa.pa4.into_push_pull_output();
     let mut spi_config = spi::Config::default();
-    spi_config.frequency = mhz(20);
+    spi_config.frequency = mhz(60);
     //ILI9486 SPI DISPLAY SETTING
     let back_l = Output::new(p.PA3, Level::High, Speed::High);
     let ce = Output::new(p.PA4, Level::High, Speed::Low);
@@ -74,8 +93,18 @@ async fn main(spawner: Spawner) {
     let sck = p.PA5;
     let rst: Output = Output::new(p.PA1, Level::High, Speed::Low);
     // let s_rst = gpioa.pa1.into_push_pull_output();
-    let spi = spi::Spi::new_blocking(p.SPI1, sck, mosi, miso, spi_config);
+    let spi= spi::Spi::new_blocking(p.SPI1, sck, mosi, miso, spi_config);
     // let spi = spi::Spi::new();
+    let mut rf_spi_config = spi::Config::default();
+    rf_spi_config.frequency = mhz(1);
+    let rf_ce =Output::new(p.PD9, Level::High, Speed::Low);
+    let rf_csn = Output::new(p.PB12, Level::High, Speed::Low);
+    let rf_sck = p.PB13;
+    let rf_mosi = p.PB15;
+    let rf_miso = p.PB14;
+    let rf_spi= spi::Spi::new_blocking(p.SPI2, rf_sck, rf_mosi, rf_miso, rf_spi_config);
+    let mut buffer = [0_u8; 512];
+    // let mut nrf24 = NRF24L01::new(rf_ce,rf_csn, rf_spi).unwrap();
     let mut sdmmc = Sdmmc::new_4bit(
         p.SDMMC1,
         Irqs,
@@ -97,7 +126,7 @@ async fn main(spawner: Spawner) {
     // info!("Card: {:#?}", Debug2Format(card));
     // let executor = EXECUTOR.init(Executor::new());
     spawner.spawn(dislay_task(spi,ce,dc,rst)).ok();
-    spawner.spawn(run_med()).ok();
+    spawner.spawn(rf_rec(rf_spi,rf_ce,rf_csn)).ok();
     loop{
         //button interrupts
         //down
