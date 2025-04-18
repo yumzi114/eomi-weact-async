@@ -2,6 +2,7 @@
 #![no_main]
 
 mod task_func;
+use core::alloc;
 use core::fmt::Write;
 use core::str::from_utf8;
 use cortex_m_rt::entry;
@@ -24,6 +25,11 @@ use core::sync::atomic::{AtomicBool, AtomicUsize,Ordering};
 static MENU_STATE: AtomicUsize = AtomicUsize::new(1_usize);
 static RF_STATE: AtomicBool = AtomicBool::new(false);
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+use embassy_sync::mutex::Mutex;
+use embassy_sync::channel::Channel;
+use core::cell::RefCell;
+
+
 
 
 bind_interrupts!(struct Irqs {
@@ -120,16 +126,20 @@ async fn main(spawner: Spawner) {
     info!("Configured clock: {}", sdmmc.clock().0);
     // let card = unwrap!(sdmmc.card());
     // info!("Card: {:#?}", Debug2Format(card));
-    // unwrap!(sdmmc.init_card(mhz(350)).await);
+    // unwrap!(sdmmc.init_card(mhz(10)).await);
     // let card = unwrap!(sdmmc.card());
 
     // info!("Card: {:#?}", Debug2Format(card));
     // let executor = EXECUTOR.init(Executor::new());
     spawner.spawn(dislay_task(spi,ce,dc,rst)).ok();
     spawner.spawn(rf_rec(rf_spi,rf_ce,rf_csn)).ok();
+    
     loop{
         //button interrupts
         //down
+        // if let Err(e) = rf_task {
+        //     RF_STATE.store(false, Ordering::Release);
+        // }
         if up_button.is_high() {
             blue_led.set_high();
             if MENU_STATE.load(Ordering::Acquire)<3{

@@ -89,37 +89,42 @@ pub async fn dislay_task(
             }
             // RF_STATE
         });
-        Line::new(Point::new(1, 400), Point::new(310, 400))
+        Line::new(Point::new(1, 300), Point::new(310, 300))
             .into_styled(PrimitiveStyle::with_stroke(Rgb666::WHITE, 1))
             .draw(&mut display).unwrap();
-        Text::new("RF-DEVICE :", Point::new(20, 450), s_style)
+        Text::new("RF-DEVICE:", Point::new(20, 340), s_style)
             .draw(&mut display)
             .unwrap();
         
         
         match rf_flag {
             true=>{
-                Text::new("ENABLE", Point::new(200, 450), s_style)
+                Text::new("ENABLE", Point::new(200, 340), s_style)
                     .draw(&mut display)
                     .unwrap();
             },
             false=>{
-                Text::new("DISABLE", Point::new(200, 450), s_style)
+                Text::new("DISABLE", Point::new(200, 340), s_style)
                     .draw(&mut display)
                     .unwrap();
             }
         }
-        
+        Line::new(Point::new(1, 360), Point::new(310, 360))
+            .into_styled(PrimitiveStyle::with_stroke(Rgb666::WHITE, 1))
+            .draw(&mut display).unwrap();
         if rf_flag!=RF_STATE.load(Ordering::Acquire){
-            Rectangle::new(Point::new(200, 430), Size::new(300, 450))
+            Rectangle::new(Point::new(200, 315), Size::new(300, 25))
                 .into_styled(r_style)
                 .draw(&mut display)
                 .unwrap();
             rf_flag=RF_STATE.load(Ordering::Acquire)
         }
+        
         // Text::new("->", Point::new(1, 35), sel_style)
         //     .draw(&mut display)
         //     .unwrap();
+
+        // info!("TRUE FALSE {:?}",rf_flag);
         Timer::after(Duration::from_nanos(1)).await;
         // Timer::after_ticks(10000).await;
         // info!("SPISPI");
@@ -166,8 +171,9 @@ pub async fn rf_rec(
     let mut rx = nrf24.rx().unwrap();
     loop {
         if rx.device().is_connected().unwrap(){
-            info!("DEVICE CONNECTED");
+            // info!("DEVICE CONNECTED");
             RF_STATE.store(true, Ordering::Release);
+            
         }
         if let Some(pipe) = rx.can_read().unwrap() {
             // iprintln!(stim, "Reading from pipe: {}", pipe);
