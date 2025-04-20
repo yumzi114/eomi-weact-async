@@ -1,5 +1,5 @@
 [target.thumbv7em-none-eabihf]
-runner = 'probe-rs run --chip STM32H723ZGTx'
+runner = 'probe-rs run --chip STM32H723ZGTx --probe 1366:1020:000053000782'
 
 [build]
 target = "thumbv7em-none-eabihf" # Cortex-M4F and Cortex-M7F (with FPU)

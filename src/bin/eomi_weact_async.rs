@@ -2,41 +2,59 @@
 #![no_main]
 
 mod task_func;
-use core::alloc;
+use core::{alloc, mem};
 use core::fmt::Write;
-use core::str::from_utf8;
+use core::str::{from_utf8, Bytes};
 use cortex_m_rt::entry;
 use defmt::*;
 use embassy_executor::{Executor, Spawner};
+use embassy_stm32::dma::NoDma;
 use embassy_stm32::exti::ExtiInput;
+use embassy_stm32::flash::Blocking;
 use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
+use embassy_stm32::pac::Interrupt::{DMA1_STREAM0,DMA1_STREAM1};
 use embassy_stm32::sdmmc::Sdmmc;
 use embassy_stm32::time::mhz;
-use embassy_stm32::{bind_interrupts, peripherals, sdmmc, spi, Config};
+use embassy_stm32::usart::{self, BufferedInterruptHandler, Config as USARTConfig, RxDma, TxDma, Uart, UartTx };
+use embassy_stm32::{bind_interrupts, pac, peripherals, sdmmc, spi, Config};
+use embassy_sync::blocking_mutex::raw::{NoopRawMutex, ThreadModeRawMutex};
 use embassy_time::{Delay, Duration, Instant, Timer};
+
 use embedded_nrf24l01::NRF24L01;
+use heapless::{String, Vec};
 use static_cell::StaticCell;
-use task_func::{dislay_task, rf_rec};
+use task_func::{dislay_task, rf_rec, usart_reader};
 use {defmt_rtt as _, panic_probe as _};
 use embedded_hal_1::digital::OutputPin;
 use embedded_hal_1::digital::ErrorType;
 use core::sync::atomic::{AtomicBool, AtomicUsize,Ordering};
-
+// static CHANNEL: StaticCell<Channel<ThreadModeRawMutex, u32, 4>> = StaticCell::new();
+type MyChannel = Channel<ThreadModeRawMutex, Vec<u8, 16>, 4>;
 static MENU_STATE: AtomicUsize = AtomicUsize::new(1_usize);
 static RF_STATE: AtomicBool = AtomicBool::new(false);
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+// static MSG: Q16<String<32>> = Q16::new();
+static MSG: Q16<Vec<u8, 16>> = Q16::new();
+static CHANNEL: StaticCell<MyChannel> = StaticCell::new();
+
 use embassy_sync::mutex::Mutex;
 use embassy_sync::channel::Channel;
 use core::cell::RefCell;
-
-
-
+use heapless::mpmc::Q2;
+use heapless::mpmc::Q16;
 
 bind_interrupts!(struct Irqs {
     SDMMC1 => sdmmc::InterruptHandler<peripherals::SDMMC1>;
+    // USART1 => usart::InterruptHandler<peripherals::USART1>;
 });
+bind_interrupts!(struct Birqs {
+    USART1 => BufferedInterruptHandler<embassy_stm32::peripherals::USART1>;
+});
+// static MESSAGE_CHANNEL: Channel<ThreadModeRawMutex, heapless::String<32>, 1> = Channel::new();
+// static MESSAGE_Q: Q2<String<32>, 2, NoopRawMutex> = Q2::new();
 // use embedded_hal::digital::v2::OutputPin;
 use core::convert::Infallible;
+
 // pub struct SafeOutputPin<P>(pub P);
 
 // impl<P: OutputPin<Error = Infallible>> ErrorType for SafeOutputPin<P> {
@@ -84,7 +102,7 @@ async fn main(spawner: Spawner) {
     // let rf_ce: SafeOutputPin<peripherals::PA8> = SafeOutputPin(p.PA8);
     // let rf_csn: SafeOutputPin<peripherals::PA9> = SafeOutputPin(p.PA9);
     let up_button = Input::new(p.PA11,Pull::Down);
-    let down_button = Input::new(p.PA10,Pull::Down);
+    let down_button = Input::new(p.PA12,Pull::Down);
     let mut blue_led=Output::new(p.PE3, Level::Low, Speed::Low);
     // blue_led.
     // let cs = gpioa.pa4.into_push_pull_output();
@@ -123,6 +141,30 @@ async fn main(spawner: Spawner) {
         p.PC11,
         Default::default(),
     );
+    let usart_config: USARTConfig = USARTConfig::default();
+    // let asd = DMA1_STREAM0;
+    // let tx_dma = RxDma::DMA1_STREAM0; // 이게 스트림 1
+    // let rx_dma = DMA::new_stream0(); 
+    
+    let usart: peripherals::USART1 = p.USART1;
+    let rx: peripherals::PB7 =p.PB7;
+    let tx: peripherals::PB6=p.PB6;
+    let tx_dma =p.DMA1_CH1;
+    let rx_dma=p.DMA1_CH0;
+    
+
+    // let mut channel: Channel<NoopRawMutex, u32, 3> = Channel::<NoopRawMutex, u32, 3>::new();
+    // let mut usart = Uart::new(p.USART1, p.PB7, p.PB6, Irqs, p.DMA1_CH5, p.DMA1_CH1, usart_config).unwrap();
+    // let uart_demo_rx = UartRx::new(
+    //     p.UART7,
+    //     Irqs,
+    //     p.PE7,
+    //     p.DMA1_CH1,
+    //     embassy_stm32::usart::Config::default(),
+    // ).unwrap();
+    // let mut usart= Uart::new_blocking(p.UART7, p.PE7, p.PE8, usart_config).unwrap();
+    // unwrap!(usart.blocking_write(b"Type 8 chars to echo!\r\n"));
+    // let (mut tx, rx) = usart.split();
     info!("Configured clock: {}", sdmmc.clock().0);
     // let card = unwrap!(sdmmc.card());
     // info!("Card: {:#?}", Debug2Format(card));
@@ -131,8 +173,15 @@ async fn main(spawner: Spawner) {
 
     // info!("Card: {:#?}", Debug2Format(card));
     // let executor = EXECUTOR.init(Executor::new());
-    spawner.spawn(dislay_task(spi,ce,dc,rst)).ok();
+    let channel: Channel<ThreadModeRawMutex, Vec<u8, 16>, 4> = Channel::<ThreadModeRawMutex, Vec<u8, 16>, 4>::new();
+    let m_channel: &'static MyChannel=CHANNEL.init(channel);
     spawner.spawn(rf_rec(rf_spi,rf_ce,rf_csn)).ok();
+    spawner.spawn(usart_reader(usart,rx,tx,usart_config,m_channel)).ok();
+    
+    spawner.spawn(dislay_task(spi,ce,dc,rst,m_channel)).ok();
+    
+    
+    
     
     loop{
         //button interrupts
